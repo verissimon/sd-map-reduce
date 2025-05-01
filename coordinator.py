@@ -126,6 +126,38 @@ def wait_for_mappers():
     pubsub.unsubscribe()
     logger.info("Todas as tasks de mapper concluídas")
 
+def perform_shuffle():
+    """Executa a fase de embaralhamento lendo as saídas do mapeador e agrupando por chaves."""
+    logger.info("Começando o shuffle")
+    all_key_values = {}
+    
+    # Ler arquivos intermediários dos mappers
+    for i in range(NUM_MAPPERS):
+        intermediate_file = os.path.join(INTERMEDIATE_DIR, f"mapper{i}.json")
+        try:
+            with open(intermediate_file, 'r', encoding='utf-8') as f:
+                mapper_output = json.load(f)
+                for key, value in mapper_output.items():
+                    if key not in all_key_values:
+                        all_key_values[key] = []
+                    all_key_values[key].extend(value)
+        except FileNotFoundError:
+            logger.warning(f"Arquivo intermediário não encontrado: {intermediate_file}")
+    
+    # Particionar para reducers
+    reducer_partitions = [{} for _ in range(NUM_REDUCERS)]
+    for key, values in all_key_values.items():
+        reducer_index = int(hashlib.md5(key.encode()).hexdigest(), 16) % NUM_REDUCERS
+        reducer_partitions[reducer_index][key] = values
+    
+    # Salvar arquivos de entrada dos reducers
+    for i in range(NUM_REDUCERS):
+        reducer_input_file = os.path.join(REDUCER_INPUT_DIR, f"reducer{i}_input.json")
+        with open(reducer_input_file, 'w', encoding='utf-8') as f:
+            json.dump(reducer_partitions[i], f)
+    
+    logger.info("Shuffle concluído")
+
 def run_mapreduce():
     """Executa o processo MapReduce."""
     logger.info("Iniciando o processo MapReduce")

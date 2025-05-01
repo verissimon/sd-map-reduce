@@ -1,3 +1,4 @@
+import json
 import os
 from generate_test_data import generate_test_data
 import redis
@@ -22,6 +23,10 @@ REDUCER_INPUT_DIR = 'reducer_input'
 REDUCER_OUTPUT_DIR = 'reducer_output'
 FINAL_RESULT_DIR = 'final_result'
 FINAL_RESULT = 'final_result.txt'
+
+# Redis queues e channels
+MAPPER_QUEUE = 'mapper_tasks'
+MAPPER_COMPLETION_CHANNEL = 'mapper_completion'
 
 logger.info(f"Conectando ao redis em {REDIS_HOST}:{REDIS_PORT}")
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
@@ -49,7 +54,7 @@ def split_input_file():
     file_size = os.path.getsize(DATA_PATH)
     chunk_size = file_size // NUM_MAPPERS
     
-    logger.info(f"Splitting {DATA_PATH} ({file_size} bytes) into {NUM_MAPPERS} chunks")
+    logger.info(f"Dividindo {DATA_PATH} ({file_size} bytes) em {NUM_MAPPERS} chunks")
     
     with open(DATA_PATH, 'r', encoding='utf-8') as f:
         chunk_number = 0
@@ -80,13 +85,61 @@ def write_chunk(chunk_data, chunk_number):
         f.writelines(chunk_data)
     logger.info(f"Chunk criado: {chunk_file}")
 
+def prepare_mapper_tasks():
+    """Prepara tasks de mapper e as coloca na fila Redis."""
+    # Limpar fila primeiro
+    redis_client.delete(MAPPER_QUEUE)
+    
+    # Cria task para cada chink
+    for i in range(NUM_MAPPERS):
+        chunk_file = os.path.join(CHUNK_DIR, f"chunk{i}.txt")
+        intermediate_file = os.path.join(INTERMEDIATE_DIR, f"mapper{i}.json")
+        
+        task = json.dumps({
+            'task_id': f"mapper_{i}",
+            'input_file': chunk_file,
+            'output_file': intermediate_file
+        })
+        
+        # Push task to Redis queue
+        redis_client.rpush(MAPPER_QUEUE, task)
+        logger.info(f"Adiciona mapper task para a chunk{i}.txt na fila")
+
+def wait_for_mappers():
+    """Espera todas as tasks mapper completarem."""
+    logger.info(f"Esperando {NUM_MAPPERS} mappers completarem")
+    
+    # Observa a conclusão de tasks mapper com subscribe ao pubsub
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe(MAPPER_COMPLETION_CHANNEL)
+    
+    completos = 0
+    
+    # espera mensagens de conclusão das tarefas
+    while completos < NUM_MAPPERS:
+        message = pubsub.get_message(timeout=1.0)
+        if message and message['type'] == 'message':
+            task_id = message['data']
+            logger.info(f"Mapper task Completa: {task_id}")
+            completos += 1
+    
+    pubsub.unsubscribe()
+    logger.info("Todas as tasks de mapper concluídas")
+
 def run_mapreduce():
     """Executa o processo MapReduce."""
     logger.info("Iniciando o processo MapReduce")
-    
+    # setup
     create_directories()
-    
+    # passo 1: divisao do arquivo de entrada em pedaços
     split_input_file()
+    
+    # passo 2: As tarefas de mapping são enviadas para uma fila no Redis
+    prepare_mapper_tasks()
+    logger.info("Mappers serão executados agora")
+    # Os workers de mapping retiram tarefas da fila, processam-nas 
+    # e emitem pares chave-valor intermediários
+    wait_for_mappers()
     
 if __name__ == "__main__":
     run_mapreduce()

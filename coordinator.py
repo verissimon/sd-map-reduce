@@ -26,7 +26,9 @@ FINAL_RESULT = 'final_result.txt'
 
 # Redis queues e channels
 MAPPER_QUEUE = 'mapper_tasks'
+REDUCER_QUEUE = 'reducer_tasks'
 MAPPER_COMPLETION_CHANNEL = 'mapper_completion'
+REDUCER_COMPLETION_CHANNEL = 'reducer_completion'
 
 logger.info(f"Conectando ao redis em {REDIS_HOST}:{REDIS_PORT}")
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
@@ -238,6 +240,7 @@ def run_mapreduce():
     # passo 2: As tarefas de mapping são enviadas para uma fila no Redis
     prepare_mapper_tasks()
     logger.info("Mappers serão executados agora")
+    wait_for_mappers()
 
     # passo 3: Shuffle fase
     perform_shuffle()

@@ -1,6 +1,7 @@
 import random
 import os
 import logging
+import sys
 
 def generate_random_paragraph(min_words=20, max_words=100):
     """Gera um parágrafo aleatório com um número aleatório de palavras."""
@@ -60,4 +61,16 @@ def generate_test_data(file_path, size_mb=10):
     logging.info(f"Arquivo de teste gerado: {file_path} ({tamanho_final / (1024 * 1024):.2f} MB)")
 
 if __name__ == "__main__":
-    generate_test_data("./data/data.txt")
+    try:
+        if len(sys.argv) > 1:
+            size_mb = int(sys.argv[1])
+            if size_mb <= 0:
+                raise ValueError("O parâmetro tamanho em MB deve ser um inteiro positivo.")
+        else:
+            size_mb = 10
+
+        generate_test_data("./data/data.txt", size_mb=size_mb)
+    except ValueError as e:
+        print(f"Error: {e}")
+        print("Uso: python generate_test_data.py [size_mb]")
+        sys.exit(1)

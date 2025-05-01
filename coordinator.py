@@ -158,6 +158,27 @@ def perform_shuffle():
     
     logger.info("Shuffle concluído")
 
+def prepare_reducer_tasks():
+    """Prepara tarefas para os reducers."""
+    redis_client.delete(REDUCER_QUEUE)
+    for i in range(NUM_REDUCERS):
+        task = json.dumps({
+            'task_id': f"reducer_{i}",
+            'input_file': os.path.join(REDUCER_INPUT_DIR, f"reducer{i}_input.json"),
+            'output_file': os.path.join(REDUCER_OUTPUT_DIR, f"reducer{i}_output.txt")
+        })
+        redis_client.rpush(REDUCER_QUEUE, task)
+
+def wait_for_reducers():
+    """Espera os reducers terminarem."""
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe(REDUCER_COMPLETION_CHANNEL)
+    completed = 0
+    while completed < NUM_REDUCERS:
+        message = pubsub.get_message(timeout=1.0)
+        if message and message['type'] == 'message':
+            completed += 1
+
 def run_mapreduce():
     """Executa o processo MapReduce."""
     logger.info("Iniciando o processo MapReduce")
@@ -169,6 +190,16 @@ def run_mapreduce():
     # passo 2: As tarefas de mapping são enviadas para uma fila no Redis
     prepare_mapper_tasks()
     logger.info("Mappers serão executados agora")
+
+    # passo 3: shuffle fase
+    perform_shuffle()
+
+    #passo 4: Preparar e executar tarefas do reduce
+
+    prepare_reducer_tasks()
+    logger.info("Reducers serão executados agora")
+    wait_for_reducers()
+    
     # Os workers de mapping retiram tarefas da fila, processam-nas 
     # e emitem pares chave-valor intermediários
     wait_for_mappers()

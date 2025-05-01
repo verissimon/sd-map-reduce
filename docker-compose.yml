@@ -1,0 +1,71 @@
+version: '3'
+
+services:
+  # Redis service for task coordination
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+  
+  # Coordinator
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+    volumes:
+      - ./data:/app/data
+      - ./chunks:/app/chunks
+      - ./intermediate:/app/intermediate
+      - ./reducer_input:/app/reducer_input
+      - ./reducer_output:/app/reducer_output
+      - ./final_result:/app/final_result
+    command: ["./wait-for-redis.sh", "redis", "6379", "python", "coordinator.py"]
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    restart: on-failure
+  
+  # Mapper workers
+  mapper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+      - coordinator
+    volumes:
+      - ./chunks:/app/chunks
+      - ./intermediate:/app/intermediate
+    command: ["./wait-for-redis.sh", "redis", "6379", "python", "mapper.py"]
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    deploy:
+      replicas: 10  # numero de instancias de mapper
+    restart: on-failure
+  
+  # Reducer workers
+  reducer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+      - coordinator
+    volumes:
+      - ./reducer_input:/app/reducer_input
+      - ./reducer_output:/app/reducer_output
+    command: ["./wait-for-redis.sh", "redis", "6379", "python", "reducer.py"]
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    deploy:
+      replicas: 5  # numero de instancias de reducer
+    restart: on-failure
+
+volumes:
+  redis-data:

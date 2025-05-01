@@ -159,25 +159,73 @@ def perform_shuffle():
     logger.info("Shuffle concluído")
 
 def prepare_reducer_tasks():
-    """Prepara tarefas para os reducers."""
+    """Prepara tarefas para os reducers e as envia para a fila do Redis."""
     redis_client.delete(REDUCER_QUEUE)
+    
+    # Cria uma tarefa para cada reducer
     for i in range(NUM_REDUCERS):
+        input_file = os.path.join(REDUCER_INPUT_DIR, f"reducer{i}_input.json")
+        output_file = os.path.join(REDUCER_OUTPUT_DIR, f"reducer{i}_output.txt")
+        
         task = json.dumps({
             'task_id': f"reducer_{i}",
-            'input_file': os.path.join(REDUCER_INPUT_DIR, f"reducer{i}_input.json"),
-            'output_file': os.path.join(REDUCER_OUTPUT_DIR, f"reducer{i}_output.txt")
+            'input_file': input_file,
+            'output_file': output_file
         })
+        
+        # Adiciona a tarefa na fila do Redis
         redis_client.rpush(REDUCER_QUEUE, task)
+        logger.info(f"Tarefa do reducer{i} adicionada à fila")
 
 def wait_for_reducers():
-    """Espera os reducers terminarem."""
+    """Aguarda todas as tarefas dos reducers serem completadas."""
+    logger.info(f"Aguardando {NUM_REDUCERS} reducers completarem")
+    
     pubsub = redis_client.pubsub()
     pubsub.subscribe(REDUCER_COMPLETION_CHANNEL)
-    completed = 0
-    while completed < NUM_REDUCERS:
+    
+    completos = 0
+    
+    # Aguarda mensagens de conclusão
+    while completos < NUM_REDUCERS:
         message = pubsub.get_message(timeout=1.0)
         if message and message['type'] == 'message':
-            completed += 1
+            task_id = message['data']
+            logger.info(f"Tarefa do reducer concluída: {task_id}")
+            completos += 1
+    
+    pubsub.unsubscribe()
+    logger.info("Todas as tarefas dos reducers foram concluídas")
+
+def merge_results():
+    """Combina todos os resultados dos reducers em um arquivo final."""
+    logger.info(f"Combinando saídas dos reducers em {FINAL_RESULT_DIR}/{FINAL_RESULT}")
+        
+    resultados_combinados = {}
+    
+    for i in range(NUM_REDUCERS):
+        arquivo_saida = os.path.join(REDUCER_OUTPUT_DIR, f"reducer{i}_output.txt")
+        
+        try:
+            with open(arquivo_saida, 'r', encoding='utf-8') as f:
+                for linha in f:
+                    linha = linha.strip()
+                    if linha:
+                        chave, valor = linha.split('\t')
+                        resultados_combinados[chave] = int(valor)
+        except FileNotFoundError:
+            logger.warning(f"Arquivo de saída do reducer não encontrado: {arquivo_saida}")
+    
+    # Ordena por valor (decrescente)
+    resultados_ordenados = sorted(resultados_combinados.items(), key=lambda x: x[1], reverse=True)
+    
+    # Escreve o resultado final
+    arquivo_final = os.path.join(FINAL_RESULT_DIR, FINAL_RESULT)
+    with open(arquivo_final, 'w', encoding='utf-8') as f:
+        for chave, valor in resultados_ordenados:
+            f.write(f"{chave}\t{valor}\n")
+    
+    logger.info(f"Resultado final gravado em {FINAL_RESULT} com {len(resultados_combinados)} entradas")
 
 def run_mapreduce():
     """Executa o processo MapReduce."""
@@ -191,7 +239,7 @@ def run_mapreduce():
     prepare_mapper_tasks()
     logger.info("Mappers serão executados agora")
 
-    # passo 3: shuffle fase
+    # passo 3: Shuffle fase
     perform_shuffle()
 
     #passo 4: Preparar e executar tarefas do reduce
@@ -199,6 +247,10 @@ def run_mapreduce():
     prepare_reducer_tasks()
     logger.info("Reducers serão executados agora")
     wait_for_reducers()
+
+    #passo5: Resultados do merge
+    merge_results()
+    logger.info("MapReduce concluído com sucesso")
     
     # Os workers de mapping retiram tarefas da fila, processam-nas 
     # e emitem pares chave-valor intermediários

@@ -3,6 +3,7 @@ import os
 from generate_test_data import generate_test_data
 import redis
 import logging
+import hashlib
 
 logging.basicConfig(
     level=logging.INFO,
@@ -240,6 +241,8 @@ def run_mapreduce():
     # passo 2: As tarefas de mapping são enviadas para uma fila no Redis
     prepare_mapper_tasks()
     logger.info("Mappers serão executados agora")
+    # Os workers de mapping retiram tarefas da fila, processam-nas 
+    # e emitem pares chave-valor intermediários
     wait_for_mappers()
 
     # passo 3: Shuffle fase
@@ -254,10 +257,6 @@ def run_mapreduce():
     #passo5: Resultados do merge
     merge_results()
     logger.info("MapReduce concluído com sucesso")
-    
-    # Os workers de mapping retiram tarefas da fila, processam-nas 
-    # e emitem pares chave-valor intermediários
-    wait_for_mappers()
     
 if __name__ == "__main__":
     run_mapreduce()
